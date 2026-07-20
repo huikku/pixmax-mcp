@@ -132,6 +132,9 @@ One structural difference matters: **on Pixmax, resolution and reference images 
 | Kling O1 | **$0.056/s** | $0.095/s | **−41%** |
 | Hailuo 2.3 | **$0.049/s** | $0.12/s | **−59%** |
 | Veo 3.1 | **$0.175/s** | $0.20/s | −13% |
+| Seedance 2.0 Mini | **$0.098/s** | $0.151/s | **−35%** |
+| Seedance 2.0 Fast | **$0.154/s** | $0.242/s | **−36%** |
+| Seedance 2.0 | **$0.196/s** | $0.302/s | **−35%** |
 
 At a lower Pixmax subscription tier (Starter, ~$0.010/credit) the image gaps narrow; at annual tiers (~$0.005/credit) they widen further. Run `list_models` for the live credit estimate against your own key.
 
