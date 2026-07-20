@@ -1,0 +1,46 @@
+{
+  "name": "pixmax-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server for the Pixmax generation API — images, video, text, audio and 3D (Seedream, Midjourney, Nano Banana, GPT Image, Kling, Veo, Hailuo, Wan, Hunyuan 3D) on a single key.",
+  "type": "module",
+  "bin": {
+    "pixmax-mcp": "src/index.js"
+  },
+  "main": "src/index.js",
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "start": "node src/index.js",
+    "inspect": "npx @modelcontextprotocol/inspector node src/index.js",
+    "smoke": "node test/smoke.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "pixmax",
+    "ai",
+    "image-generation",
+    "video-generation",
+    "seedream",
+    "midjourney",
+    "nano-banana",
+    "kling",
+    "veo",
+    "claude",
+    "llm-tools"
+  ],
+  "author": "John Huikku / Alienrobot LLC",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/huikku/pixmax-mcp.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  }
+}
