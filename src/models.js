@@ -33,7 +33,7 @@ export const TEXT_CREDITS = {
 export const AUDIO_CREDITS_PER_SEC = {
     MINIMAX_SPEECH_28_TURBO: 0.125, MINIMAX_SPEECH_28_HD: 0.22,
     ELEVENLABS_V3: 0.75, ELEVENLABS_V2: 1.0, ELEVENLABS_MUSIC: 2.0,
-    MINIMAX_MUSIC_26: 2.0, // currently a 0-credit billing bug; estimate defensively
+    MINIMAX_MUSIC_26: 2.0, // requires `music_mode` + `lyrics`; cost estimate is approximate
 };
 
 export const THREE_D_CREDITS = { HUNYUAN_3D_PRO_30: 115, HUNYUAN_3D_PRO_31: 135 };
@@ -98,7 +98,10 @@ export function buildParams(modelCode, nodeType, input = {}) {
         p.count = Number(input.count || 1);
     } else if (nodeType === 'GENERATE_AUDIO') {
         if (input.duration) p.duration = Number(input.duration);
-        if (modelCode === 'MINIMAX_MUSIC_26' && input.lyrics) p.lyrics = input.lyrics;
+        if (modelCode === 'MINIMAX_MUSIC_26') {
+            if (input.lyrics) p.lyrics = input.lyrics;
+            if (input.music_mode) p.musicMode = input.music_mode; // required by MiniMax Music
+        }
     } else if (nodeType === 'GENERATE_3D') {
         p.referModel = 'textTo3D';
         p.generateType = input.generate_type || 'Normal';

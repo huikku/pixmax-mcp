@@ -275,7 +275,8 @@ server.registerTool(
             prompt: z.string().describe('Text to speak, or a music description'),
             model: z.string().describe('Model code or name, e.g. "ELEVENLABS_V3" or "MINIMAX_SPEECH_28_HD"'),
             duration: z.number().int().optional().describe('Seconds (music models)'),
-            lyrics: z.string().optional().describe('Required for MINIMAX_MUSIC_26'),
+            lyrics: z.string().optional().describe('For MiniMax Music'),
+            music_mode: z.string().optional().describe('Required by MiniMax Music (MINIMAX_MUSIC_26) — see Pixmax docs for values'),
             save_to: z.string().optional().describe('Directory to save the audio — Pixmax URLs expire'),
         },
     },
@@ -283,7 +284,7 @@ server.registerTool(
         try {
             const r = await runTask({
                 model: a.model, nodeType: 'GENERATE_AUDIO', prompt: a.prompt,
-                paramInput: { duration: a.duration, lyrics: a.lyrics }, saveTo: a.save_to,
+                paramInput: { duration: a.duration, lyrics: a.lyrics, music_mode: a.music_mode }, saveTo: a.save_to,
             });
             if (r.content) return r;
             const au = r.assets[0];
