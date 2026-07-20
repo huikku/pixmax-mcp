@@ -105,6 +105,36 @@ Depends on your account. `list_models` is authoritative. Common ones:
 
 Pixmax bills in **credits**. Each tool reports the task's actual credit cost (from the API) and an approximate USD figure using `PIXMAX_CREDIT_USD`. The USD number is display-only — your real rate depends on your subscription tier. Failed and cancelled tasks cost nothing.
 
+## Pricing vs fal.ai
+
+Many of these models are also on [fal.ai](https://fal.ai), so here's how they compare. Pixmax figures are the measured credit cost at the **Pro tier** (`$1 ≈ 143 credits`, i.e. `$0.007/credit`); fal figures are USD list price. Both were measured mid-2026 and both providers change pricing over time — treat this as **directional, not a live quote**.
+
+One structural difference matters: **on Pixmax, resolution and reference images are free**; on fal you pay more for higher resolution. So Pixmax's advantage widens at 2K/4K and for reference-heavy (character-consistency) work.
+
+### Images — per image
+
+| Model | Pixmax | fal.ai | |
+|---|---|---|---|
+| Seedream 5.0 Lite | **$0.035** (up to 5504px) | $0.035 (capped at 3072px) | same price, larger output |
+| Seedream 5.0 Pro | **$0.07** | $0.135 @2K | **~48% cheaper** |
+| Nano Banana | **$0.028** | $0.039 | **~28% cheaper** |
+| Nano Banana 2 | $0.098 | $0.08 @1K · $0.12 @2K | ~even at 2K |
+| Nano Banana Pro | **$0.126** | $0.15 @2K · $0.30 @4K | −16%, **−58% at 4K** |
+| GPT Image 2 | $0.042 | — | |
+| Midjourney V7 / V8.1 | $0.112 / $0.14 | not available on fal | **Pixmax only** |
+
+### Video — per second
+
+| Model | Pixmax | fal.ai | |
+|---|---|---|---|
+| Kling V3 | **$0.077/s** | $0.224/s | **−66%** |
+| Kling 2.6 | **$0.028/s** | $0.07/s | **−60%** |
+| Kling O1 | **$0.056/s** | $0.095/s | **−41%** |
+| Hailuo 2.3 | **$0.049/s** | $0.12/s | **−59%** |
+| Veo 3.1 | **$0.175/s** | $0.20/s | −13% |
+
+At a lower Pixmax subscription tier (Starter, ~$0.010/credit) the image gaps narrow; at annual tiers (~$0.005/credit) they widen further. Run `list_models` for the live credit estimate against your own key.
+
 ## Develop
 
 ```bash
