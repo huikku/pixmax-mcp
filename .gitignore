@@ -6,3 +6,4 @@ dist/
 .DS_Store
 out/
 .gallery-run.mjs
+assets/pixmax-mcp-tests/

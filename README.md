@@ -1,6 +1,8 @@
 # pixmax-mcp
 
-A [Model Context Protocol](https://modelcontextprotocol.io) server for the **Pixmax** generation API. Gives any MCP client — Claude Desktop, Cursor, Claude Code, your own agent — one set of tools to generate **images, video, text, audio, and 3D** across dozens of models on a single key: Seedream 5, Midjourney, Nano Banana, GPT Image, Qwen, Kling, Veo 3.1, Hailuo, Wan, Hunyuan 3D, ElevenLabs, and more.
+![pixmax-mcp](assets/banner.png)
+
+A [Model Context Protocol](https://modelcontextprotocol.io) server for the **Pixmax** generation API. Gives any MCP client — Claude Desktop, Cursor, Claude Code, your own agent — one set of tools to generate **images, video, text, audio, and 3D** across dozens of models on a single key: Seedream 5, Nano Banana, GPT Image, Qwen, Kling, Veo 3.1, Hailuo, Wan, Hunyuan 3D, ElevenLabs, and more.
 
 Self-contained and dependency-light — it talks straight to `console.pixmax.ai/openapi`. No other services involved.
 
@@ -66,14 +68,16 @@ claude mcp add pixmax -e PIXMAX_API_KEY=pk_live_your_key_here -- npx -y pixmax-m
 | Tool | What it does |
 |---|---|
 | `list_models` | List models your key can use (filter by type), with estimated credit cost. **Call this first.** |
-| `generate_image` | Image gen. `reference_images` (paths or URLs, up to 14, free) for image-to-image / character consistency. |
-| `generate_video` | Video gen. `image` for image-to-video. `wait: false` returns a task id for long jobs. |
+| `generate_image` | Image gen. `reference_images` (paths or URLs, up to 14, free) for image-to-image / character consistency. `quality` (GPT Image 2), `prompt_extend` (Qwen). |
+| `generate_video` | Video gen. `image` or `reference_images` for image-to-video. `count`, `refer_model`. `wait: false` returns a task id for long jobs. |
 | `generate_text` | Text/LLM models. Returns the text. |
-| `generate_3d` | Text → 3D model (`.glb`) via Hunyuan 3D. |
+| `generate_3d` | Text → 3D model (`.glb`) via Hunyuan 3D. `generate_type`, `enable_pbr`, `face_count`, `polygon_type`. |
 | `generate_audio` | Speech & music. `lyrics` for MiniMax Music. |
+| `generate_storyboard` | Storyboard panels via the `GENERATE_STORYBOARD` node type (GPT Image 2, Nano Banana 2 / Pro). |
 | `get_task` | Poll a task started with `wait: false`. |
+| `list_tasks` | Recent task history — status, prompt, and result URL(s). Recover a result you forgot to save, or audit activity. |
 
-Every generate tool accepts `save_to` — a directory to download the result into, because **Pixmax result URLs live on object storage and expire**. Always save anything you want to keep.
+Every generate tool accepts `save_to` — a directory to download the result into, because **Pixmax result URLs live on object storage and expire**. Always save anything you want to keep. All of them also accept `wait: false` to submit and return a task id immediately (poll with `get_task`) — worth it for slow jobs like video and 3D.
 
 ### Examples (natural language to your agent)
 
@@ -91,7 +95,7 @@ Every generate tool accepts `save_to` — a directory to download the result int
 
 Depends on your account. `list_models` is authoritative. Common ones:
 
-- **Image** — Seedream 5.0 Pro / Lite / 4.5 · Nano Banana / 2 / Pro · GPT Image 2 · Midjourney V7 / V8.1 / Niji 7 · Qwen Image Edit Plus / Max · MiniMax Image · Wan 2.7 Image / Pro
+- **Image** — Seedream 5.0 Pro / Lite / 4.5 · Nano Banana / 2 / Pro · GPT Image 2 · Qwen Image Edit Plus / Max · MiniMax Image · Wan 2.7 Image / Pro
 - **Video** — Kling V3 / V3 Omni / O1 / 2.6 · Veo 3.1 · Hailuo 02 / 2.3 · Wan 2.6 / 2.7 · PixVerse C1 / V6 · Vidu Q2 / Q3 · Seedance 1.5 / 2.0
 - **Text** — DeepSeek V4 Flash / Pro · Gemini 2.5 / 3 / 3.1 · MiniMax M3 · Doubao Seed 2.x
 - **Audio** — ElevenLabs V2 / V3 / Music · MiniMax Speech / Music
@@ -127,7 +131,6 @@ One structural difference matters: **on Pixmax, resolution and reference images 
 | Nano Banana 2 | $0.098 | $0.08 @1K · $0.12 @2K | ~even at 2K |
 | Nano Banana Pro | **$0.126** | $0.15 @2K · $0.30 @4K | −16%, **−58% at 4K** |
 | GPT Image 2 | $0.042 | — | |
-| Midjourney V7 / V8.1 | $0.112 / $0.14 | not available on fal | **Pixmax only** |
 
 ### Video — per second
 
