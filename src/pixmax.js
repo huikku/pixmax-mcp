@@ -105,6 +105,33 @@ export async function getTask(taskUuid) {
 }
 
 /**
+ * List recent tasks for this key (newest first), paginated.
+ * Returns { items, totalCount, pageIndex, pageSize }. Each item carries
+ * status, modelCode, inputTexts and resultAssets — handy for recovering a
+ * result URL you forgot to save, or auditing recent spend.
+ */
+export async function listTasks({ pageIndex = 1, pageSize = 20, status } = {}) {
+    const r = await fetch(BASE + '/task/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getKey() },
+        body: JSON.stringify({ pageIndex, pageSize, ...(status ? { status } : {}) }),
+    });
+    let j;
+    try { j = await r.json(); } catch { j = {}; }
+    if (!j || !j.success) {
+        throw new Error(`Pixmax /task/list failed (${r.status}): ${(j && (j.errMessage || j.errCode)) || 'unknown error'}`);
+    }
+    // The API nests pagination meta at the top level with `data` as the array.
+    const items = Array.isArray(j.data) ? j.data : (j.data && Array.isArray(j.data.data) ? j.data.data : []);
+    return {
+        items,
+        totalCount: j.totalCount ?? j.data?.totalCount ?? items.length,
+        pageIndex: j.pageIndex ?? j.data?.pageIndex ?? pageIndex,
+        pageSize: j.pageSize ?? j.data?.pageSize ?? pageSize,
+    };
+}
+
+/**
  * Poll until a task reaches a terminal state.
  * Statuses: QUEUE → RUNNING → COMPLETE | FAILED | ABORTED | RESOURCE_INSUFFICIENT.
  */

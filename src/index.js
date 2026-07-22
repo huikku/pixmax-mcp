@@ -13,7 +13,9 @@
  *   generate_text    DeepSeek, Gemini, MiniMax, Doubao
  *   generate_3d      Hunyuan 3D (text → .glb)
  *   generate_audio   ElevenLabs, MiniMax (speech & music)
+ *   generate_storyboard  GENERATE_STORYBOARD panels (GPT Image 2, Nano Banana 2/Pro)
  *   get_task         poll a task started with wait=false
+ *   list_tasks       recent task history (status, prompt, result URLs)
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -34,14 +36,23 @@ async function catalog() {
     return _catalog;
 }
 
-/** Resolve a model argument (exact code, exact name, or partial name) → catalog entry. */
-async function resolveModel(arg) {
+/**
+ * Resolve a model argument (exact code, exact name, or partial name) → catalog entry.
+ * A model code can appear under more than one nodeType (e.g. GPT_IMAGE_2 is both
+ * GENERATE_IMAGE and GENERATE_STORYBOARD); pass `preferNodeType` to pick the right one.
+ */
+async function resolveModel(arg, preferNodeType) {
     const all = await catalog();
     const lc = String(arg).toLowerCase();
+    const ok = (m) => !preferNodeType || m.nodeType === preferNodeType;
+    const name = (m) => (m.modelName || '').toLowerCase();
     return (
+        all.find((m) => m.modelCode === arg && ok(m)) ||
+        all.find((m) => name(m) === lc && ok(m)) ||
+        all.find((m) => name(m).includes(lc) && ok(m)) ||
         all.find((m) => m.modelCode === arg) ||
-        all.find((m) => (m.modelName || '').toLowerCase() === lc) ||
-        all.find((m) => (m.modelName || '').toLowerCase().includes(lc)) ||
+        all.find((m) => name(m) === lc) ||
+        all.find((m) => name(m).includes(lc)) ||
         null
     );
 }
@@ -83,7 +94,7 @@ const err = (e) => ({ content: [{ type: 'text', text: `Error: ${e && e.message ?
  * With wait=false it returns the task id so a long job can be polled via get_task.
  */
 async function runTask({ model, nodeType, prompt, refs = [], paramInput = {}, saveTo, wait = true }) {
-    const m = await resolveModel(model);
+    const m = await resolveModel(model, nodeType);
     if (!m) throw new Error(`Unknown model "${model}". Call list_models to see what your key can use.`);
     if (m.nodeType !== nodeType) {
         throw new Error(`Model "${m.modelName}" is a ${m.nodeType} model, not ${nodeType}. Use the matching generate_* tool.`);
@@ -153,14 +164,18 @@ server.registerTool(
             resolution: z.string().optional().describe('e.g. 1K, 2K, 4K — resolution is free on most Pixmax image models'),
             aspect_ratio: z.string().optional().describe('e.g. 16:9, 1:1, 9:16'),
             count: z.number().int().min(1).max(4).optional().describe('Number of images (billed linearly)'),
+            quality: z.enum(['low', 'medium', 'high']).optional().describe('GPT Image 2 only — render quality (default medium)'),
+            prompt_extend: z.boolean().optional().describe('Qwen Image Edit only — auto-expand the prompt (default true)'),
             save_to: z.string().optional().describe('Directory to save the result(s) — Pixmax URLs expire'),
+            wait: z.boolean().optional().describe('Default true. false = return a task id immediately (poll with get_task)'),
         },
     },
     async (a) => {
         try {
             const r = await runTask({
                 model: a.model, nodeType: 'GENERATE_IMAGE', prompt: a.prompt, refs: a.reference_images,
-                paramInput: { resolution: a.resolution, aspect_ratio: a.aspect_ratio, count: a.count }, saveTo: a.save_to,
+                paramInput: { resolution: a.resolution, aspect_ratio: a.aspect_ratio, count: a.count, quality: a.quality, prompt_extend: a.prompt_extend },
+                saveTo: a.save_to, wait: a.wait !== false,
             });
             if (r.content) return r; // wait=false path (not used here) / passthrough
             return text(
@@ -187,20 +202,24 @@ server.registerTool(
             prompt: z.string(),
             model: z.string().describe('Model code or name, e.g. "KLING_V3" or "Veo 3.1"'),
             image: z.string().optional().describe('Local path or URL for image-to-video (first frame / reference)'),
+            reference_images: z.array(z.string()).optional().describe('Multiple images (paths or URLs) for i2v / multi-reference models — the first is the primary frame'),
             duration: z.number().int().optional().describe('Seconds (model-dependent; Veo=8, Hailuo=6|10)'),
-            resolution: z.string().optional().describe('e.g. 720P, 1080P'),
+            resolution: z.string().optional().describe('e.g. 480P, 720P, 1080P'),
             aspect_ratio: z.string().optional().describe('e.g. 16:9, 9:16'),
             include_audio: z.boolean().optional(),
+            count: z.number().int().min(1).max(4).optional().describe('Number of clips (billed linearly)'),
+            refer_model: z.string().optional().describe('Override the reference mode, e.g. "textToVideo", "imageToVideo", "imageRefer" (Vidu Q3 Mix requires imageRefer)'),
             save_to: z.string().optional().describe('Directory to save the .mp4 — Pixmax URLs expire'),
             wait: z.boolean().optional().describe('Default true. false = return a task id immediately (poll with get_task)'),
         },
     },
     async (a) => {
         try {
+            const refs = a.reference_images?.length ? a.reference_images : (a.image ? [a.image] : []);
             const r = await runTask({
                 model: a.model, nodeType: 'GENERATE_VIDEO', prompt: a.prompt,
-                refs: a.image ? [a.image] : [],
-                paramInput: { duration: a.duration, resolution: a.resolution, aspect_ratio: a.aspect_ratio, include_audio: a.include_audio },
+                refs,
+                paramInput: { duration: a.duration, resolution: a.resolution, aspect_ratio: a.aspect_ratio, include_audio: a.include_audio, count: a.count, refer_model: a.refer_model },
                 saveTo: a.save_to, wait: a.wait !== false,
             });
             if (r.content) return r;
@@ -228,7 +247,7 @@ server.registerTool(
     },
     async (a) => {
         try {
-            const m = await resolveModel(a.model);
+            const m = await resolveModel(a.model, 'GENERATE_TEXT');
             if (!m) throw new Error(`Unknown model "${a.model}". Call list_models.`);
             if (m.nodeType !== 'GENERATE_TEXT') throw new Error(`"${m.modelName}" is ${m.nodeType}, not a text model.`);
             const projectUuid = await px.ensureProject();
@@ -249,12 +268,21 @@ server.registerTool(
         inputSchema: {
             prompt: z.string(),
             model: z.string().optional().describe('Default HUNYUAN_3D_PRO_30. Or HUNYUAN_3D_PRO_31.'),
+            generate_type: z.string().optional().describe('Mesh generation type (default "Normal")'),
+            enable_pbr: z.boolean().optional().describe('Generate PBR materials (default false)'),
+            face_count: z.number().int().optional().describe('Target face count (default 300000)'),
+            polygon_type: z.enum(['triangle', 'quad']).optional().describe('Mesh topology (default triangle)'),
             save_to: z.string().optional().describe('Directory to save the .glb — Pixmax URLs expire'),
+            wait: z.boolean().optional().describe('Default true. false = return a task id immediately (poll with get_task). 3D is slow — consider false.'),
         },
     },
     async (a) => {
         try {
-            const r = await runTask({ model: a.model || 'HUNYUAN_3D_PRO_30', nodeType: 'GENERATE_3D', prompt: a.prompt, saveTo: a.save_to });
+            const r = await runTask({
+                model: a.model || 'HUNYUAN_3D_PRO_30', nodeType: 'GENERATE_3D', prompt: a.prompt,
+                paramInput: { generate_type: a.generate_type, enable_pbr: a.enable_pbr, face_count: a.face_count, polygon_type: a.polygon_type },
+                saveTo: a.save_to, wait: a.wait !== false,
+            });
             if (r.content) return r;
             const g = r.assets[0];
             return text(`Generated 3D model with ${r.m.modelName}:\n  ${g?.url}` + (r.saved.length ? `\nSaved: ${r.saved.join(', ')}` : '') + costLine(r.detail));
@@ -278,13 +306,15 @@ server.registerTool(
             lyrics: z.string().optional().describe('For MiniMax Music'),
             music_mode: z.string().optional().describe('Required by MiniMax Music (MINIMAX_MUSIC_26) — see Pixmax docs for values'),
             save_to: z.string().optional().describe('Directory to save the audio — Pixmax URLs expire'),
+            wait: z.boolean().optional().describe('Default true. false = return a task id immediately (poll with get_task)'),
         },
     },
     async (a) => {
         try {
             const r = await runTask({
                 model: a.model, nodeType: 'GENERATE_AUDIO', prompt: a.prompt,
-                paramInput: { duration: a.duration, lyrics: a.lyrics, music_mode: a.music_mode }, saveTo: a.save_to,
+                paramInput: { duration: a.duration, lyrics: a.lyrics, music_mode: a.music_mode },
+                saveTo: a.save_to, wait: a.wait !== false,
             });
             if (r.content) return r;
             const au = r.assets[0];
@@ -325,13 +355,91 @@ server.registerTool(
     }
 );
 
+server.registerTool(
+    'generate_storyboard',
+    {
+        title: 'Generate a storyboard panel',
+        description:
+            'Generate an image via the GENERATE_STORYBOARD node type (GPT Image 2, Nano Banana 2, Nano Banana Pro). ' +
+            'Identical to generate_image — same pricing, same single-image output — just classified under a different ' +
+            'node type. No multi-panel behavior; use generate_image unless something downstream specifically requires ' +
+            'the GENERATE_STORYBOARD classification. Pass reference_images for consistency.',
+        inputSchema: {
+            prompt: z.string().describe('The panel to generate'),
+            model: z.string().optional().describe('Storyboard-capable model (default BANANA_PRO). Also GPT_IMAGE_2, BANANA_2.'),
+            reference_images: z.array(z.string()).optional().describe('Local paths or URLs for consistency / i2i'),
+            resolution: z.string().optional().describe('e.g. 1K, 2K, 4K — free on most models'),
+            aspect_ratio: z.string().optional().describe('e.g. 16:9, 1:1, 9:16'),
+            count: z.number().int().min(1).max(4).optional().describe('Number of panels (billed linearly)'),
+            save_to: z.string().optional().describe('Directory to save the result(s) — Pixmax URLs expire'),
+            wait: z.boolean().optional().describe('Default true. false = return a task id immediately (poll with get_task)'),
+        },
+    },
+    async (a) => {
+        try {
+            const r = await runTask({
+                model: a.model || 'BANANA_PRO', nodeType: 'GENERATE_STORYBOARD', prompt: a.prompt, refs: a.reference_images,
+                paramInput: { resolution: a.resolution, aspect_ratio: a.aspect_ratio, count: a.count },
+                saveTo: a.save_to, wait: a.wait !== false,
+            });
+            if (r.content) return r;
+            return text(
+                `Generated ${r.assets.length} storyboard panel(s) with ${r.m.modelName}:\n` +
+                r.assets.map((x) => `  ${x.url}  (${x.width}x${x.height})`).join('\n') +
+                (r.saved.length ? `\nSaved: ${r.saved.join(', ')}` : '') +
+                costLine(r.detail)
+            );
+        } catch (e) {
+            return err(e);
+        }
+    }
+);
+
+server.registerTool(
+    'list_tasks',
+    {
+        title: 'List recent tasks',
+        description:
+            'List your recent Pixmax generation tasks (newest first) with status, model, prompt, and result URL(s). ' +
+            'Useful for recovering a result you forgot to save, checking on wait=false jobs, or auditing recent activity.',
+        inputSchema: {
+            limit: z.number().int().min(1).max(100).optional().describe('How many tasks to return (default 20)'),
+            status: z
+                .enum(['QUEUE', 'RUNNING', 'COMPLETE', 'FAILED', 'ABORTED'])
+                .optional()
+                .describe('Filter to one status'),
+        },
+    },
+    async ({ limit, status }) => {
+        try {
+            const { items, totalCount } = await px.listTasks({ pageSize: limit || 20, status });
+            if (!items.length) return text('No tasks found.');
+            const rows = items.map((t) => {
+                const when = t.createTime ? new Date(Number(t.createTime) * 1000).toISOString().replace('T', ' ').slice(0, 16) : '';
+                const prompt = (t.inputTexts && t.inputTexts[0] ? t.inputTexts[0] : '').slice(0, 60);
+                const assets = px.resultAssets(t);
+                const urls = assets.map((x) => x.url).filter(Boolean);
+                return (
+                    `${(t.status || '').padEnd(9)} ${(t.modelCode || '').padEnd(22)} ${when}  ${t.taskUuid}` +
+                    (prompt ? `\n    "${prompt}"` : '') +
+                    (urls.length ? `\n    ${urls.join('\n    ')}` : '') +
+                    (t.providerErrorMsg ? `\n    ⚠ ${t.providerErrorMsg}` : '')
+                );
+            });
+            return text(`Recent tasks (showing ${items.length} of ${totalCount}):\n\n` + rows.join('\n'));
+        } catch (e) {
+            return err(e);
+        }
+    }
+);
+
 // ── start ────────────────────────────────────────────────────────────────
 
 async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
     // stderr is safe to log to; stdout is the MCP transport.
-    console.error('pixmax-mcp running (stdio). Tools: list_models, generate_image, generate_video, generate_text, generate_3d, generate_audio, get_task');
+    console.error('pixmax-mcp running (stdio). Tools: list_models, generate_image, generate_video, generate_text, generate_3d, generate_audio, generate_storyboard, get_task, list_tasks');
 }
 
 main().catch((e) => {
