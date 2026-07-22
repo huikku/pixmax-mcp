@@ -8,6 +8,12 @@ Self-contained and dependency-light — it talks straight to `console.pixmax.ai/
 
 ---
 
+## Get a Pixmax API key
+
+1. Create an account at [pixmax.ai](https://www.pixmax.ai/).
+2. Click your account icon (top right) → **Pixmax API** → create a key. It's only shown once, so copy and save it right away.
+3. Click **Top Up** (top right of the main screen) to add credits — a new account has none, and tasks will fail without balance.
+
 ## Install
 
 Requires **Node 18+** and a Pixmax platform key (`pk_live_…`, created in the Pixmax console).
