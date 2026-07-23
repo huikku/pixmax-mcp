@@ -25,18 +25,32 @@ function getKey() {
     return k;
 }
 
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+/** POST with retries: network errors and 5xx back off and retry (3 attempts). */
 async function call(path, body) {
-    const r = await fetch(BASE + path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getKey() },
-        body: JSON.stringify(body || {}),
-    });
-    let j;
-    try { j = await r.json(); } catch { j = {}; }
-    if (!j || !j.success) {
-        throw new Error(`Pixmax ${path} failed (${r.status}): ${(j && (j.errMessage || j.errCode)) || 'unknown error'}`);
+    let lastErr;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        let r;
+        try {
+            r = await fetch(BASE + path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getKey() },
+                body: JSON.stringify(body || {}),
+            });
+        } catch (e) {
+            lastErr = new Error(`Pixmax ${path} network error: ${e.message}`);
+            await sleep(attempt * 1500);
+            continue;
+        }
+        let j;
+        try { j = await r.json(); } catch { j = {}; }
+        if (j && j.success) return j.data;
+        const msg = `Pixmax ${path} failed (${r.status}): ${(j && (j.errMessage || j.errCode)) || 'unknown error'}`;
+        if (r.status >= 500) { lastErr = new Error(msg); await sleep(attempt * 1500); continue; }
+        throw new Error(msg);   // 4xx = our fault, don't retry
     }
-    return j.data;
+    throw lastErr;
 }
 
 /** All models this key is authorised for. */
@@ -75,17 +89,24 @@ export async function loadAsset(pathOrUrl) {
 
 /** Upload one asset → assetsUuid (used as inputAssetUuids on a task). */
 export async function uploadAsset({ buffer, filename = 'ref.png', contentType = 'image/png' }) {
-    const fd = new FormData();
-    fd.append('file', new Blob([buffer], { type: contentType }), filename);
-    const r = await fetch(BASE + '/assets/upload', {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + getKey() }, // no Content-Type — fetch sets the multipart boundary
-        body: fd,
-    });
-    let j;
-    try { j = await r.json(); } catch { j = {}; }
-    if (!j || !j.success) throw new Error(`Pixmax asset upload failed (${r.status}): ${(j && j.errMessage) || 'unknown error'}`);
-    return j.data.assetsUuid || j.data.assetUuid;
+    let lastErr;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            const fd = new FormData();
+            fd.append('file', new Blob([buffer], { type: contentType }), filename);
+            const r = await fetch(BASE + '/assets/upload', {
+                method: 'POST',
+                headers: { Authorization: 'Bearer ' + getKey() }, // no Content-Type — fetch sets the multipart boundary
+                body: fd,
+            });
+            let j;
+            try { j = await r.json(); } catch { j = {}; }
+            if (j && j.success) return j.data.assetsUuid || j.data.assetUuid;
+            lastErr = new Error(`Pixmax asset upload failed (${r.status}): ${(j && j.errMessage) || 'unknown error'}`);
+        } catch (e) { lastErr = e; }
+        await sleep(1500);
+    }
+    throw lastErr;
 }
 
 /** Submit a generation task → taskUuid. */
@@ -137,9 +158,18 @@ export async function listTasks({ pageIndex = 1, pageSize = 20, status } = {}) {
  */
 export async function pollTask(taskUuid, { timeoutMs = 12 * 60 * 1000, intervalMs = 4000, onProgress } = {}) {
     const start = Date.now();
+    let pollErrors = 0;
     while (Date.now() - start < timeoutMs) {
         await new Promise((res) => setTimeout(res, intervalMs));
-        const d = await getTask(taskUuid);
+        let d;
+        try {
+            d = await getTask(taskUuid);
+            pollErrors = 0;
+        } catch (e) {
+            // A blipped poll is not a failed generation — keep polling.
+            if (++pollErrors >= 5) throw e;
+            continue;
+        }
         if (onProgress) { try { onProgress(d); } catch { /* ignore */ } }
         if (d.status === 'COMPLETE') return d;
         if (d.status === 'RESOURCE_INSUFFICIENT') throw new Error('Pixmax credit balance is exhausted (RESOURCE_INSUFFICIENT).');

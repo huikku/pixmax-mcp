@@ -1,7 +1,7 @@
 {
   "name": "pixmax-mcp",
-  "version": "0.1.0",
-  "description": "Model Context Protocol server for the Pixmax generation API — images, video, text, audio and 3D (Seedream, Midjourney, Nano Banana, GPT Image, Kling, Veo, Hailuo, Wan, Hunyuan 3D) on a single key.",
+  "version": "0.2.0",
+  "description": "Model Context Protocol server for the Pixmax generation API \u2014 images, video, text, audio and 3D (Seedream, Midjourney, Nano Banana, GPT Image, Kling, Veo, Hailuo, Wan, Hunyuan 3D) on a single key.",
   "type": "module",
   "bin": {
     "pixmax-mcp": "src/index.js"

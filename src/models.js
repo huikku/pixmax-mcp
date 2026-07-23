@@ -12,6 +12,37 @@
 
 export const CREDIT_USD = Number(process.env.PIXMAX_CREDIT_USD) || 0.007;
 
+// Max reference images per image model (measured from the model configs).
+export const MAX_REFS = {
+    MIDJOURNEY: 5, MIDJOURNEY_V8_1: 5, MIDJOURNEY_NIJI_7: 5,
+    QWEN_IMAGE_EDIT_MAX: 3, QWEN_IMAGE_EDIT_PLUS: 3,
+    MINIMAX_IMAGE_01: 0, MINIMAX_IMAGE_01_LIVE: 0,
+};
+export const DEFAULT_MAX_REFS = 14;
+export const maxRefsFor = (modelCode) => MAX_REFS[modelCode] ?? DEFAULT_MAX_REFS;
+
+/**
+ * Weave per-reference guidance into the prompt — the same convention the
+ * IntelliStory pipeline uses, and one ByteDance models natively understand
+ * (@Image tags). This is most of the quality gap between "raw refs attached"
+ * and "refs the model knows how to use": each line tells the model what a
+ * reference IS (role) and how hard to follow it (strength), plus a note.
+ *
+ * refs: [{ role, strength, note }] in upload order.
+ */
+export function weaveRefGuidance(prompt, refs = []) {
+    const lines = refs.map((r, i) => {
+        const parts = [`@Image${i + 1}`];
+        const meta = [r.role, r.strength].filter(Boolean).join(', ');
+        if (meta) parts.push(`[${meta}]`);
+        let line = parts.join(' ');
+        if (r.note) line += ` — ${r.note}`;
+        return line;
+    });
+    if (!lines.length) return prompt;
+    return `${prompt ? prompt + '\n\n' : ''}Reference images:\n${lines.join('\n')}`;
+}
+
 // Flat per-image credit cost (resolution, refs and prompt length are free).
 export const IMAGE_CREDITS = {
     MINIMAX_IMAGE_01: 2, MINIMAX_IMAGE_01_LIVE: 2,

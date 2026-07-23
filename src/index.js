@@ -24,7 +24,7 @@ import { z } from 'zod';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import * as px from './pixmax.js';
-import { buildParams, estimateCredits, CREDIT_USD } from './models.js';
+import { buildParams, estimateCredits, CREDIT_USD, weaveRefGuidance, maxRefsFor } from './models.js';
 
 const server = new McpServer({ name: 'pixmax', version: '0.1.0' });
 
@@ -57,11 +57,25 @@ async function resolveModel(arg, preferNodeType) {
     );
 }
 
-/** Upload reference images (local paths or URLs) → assetsUuids. */
-async function uploadRefs(refs = []) {
+/**
+ * Normalize references: plain strings (path/URL) or rich objects
+ * { source, role?, strength?, note? }. strength 'off' drops the ref.
+ */
+function normalizeRefs(refs = []) {
+    return refs
+        .map((r) => (typeof r === 'string' ? { source: r } : r))
+        .filter((r) => r && r.source && (r.strength || 'strong') !== 'off')
+        .map((r) => ({ source: r.source, role: r.role || 'character', strength: r.strength || 'strong', note: r.note || '' }));
+}
+
+/** Upload normalized refs (capped per model) → { ids, used, dropped }. */
+async function uploadRefs(refs = [], modelCode) {
+    const cap = maxRefsFor(modelCode);
+    const used = refs.slice(0, cap);
+    const dropped = refs.length - used.length;
     const ids = [];
-    for (const ref of refs) ids.push(await px.uploadAsset(await px.loadAsset(ref)));
-    return ids;
+    for (const ref of used) ids.push(await px.uploadAsset(await px.loadAsset(ref.source)));
+    return { ids, used, dropped };
 }
 
 /** Optionally download results locally (Pixmax URLs expire). Returns saved paths. */
@@ -93,26 +107,49 @@ const err = (e) => ({ content: [{ type: 'text', text: `Error: ${e && e.message ?
  * Shared submit → (wait) → format path for the media-producing tools.
  * With wait=false it returns the task id so a long job can be polled via get_task.
  */
-async function runTask({ model, nodeType, prompt, refs = [], paramInput = {}, saveTo, wait = true }) {
+async function runTask({ model, nodeType, prompt, refs = [], style, paramInput = {}, saveTo, wait = true }) {
     const m = await resolveModel(model, nodeType);
     if (!m) throw new Error(`Unknown model "${model}". Call list_models to see what your key can use.`);
     if (m.nodeType !== nodeType) {
         throw new Error(`Model "${m.modelName}" is a ${m.nodeType} model, not ${nodeType}. Use the matching generate_* tool.`);
     }
     const projectUuid = await px.ensureProject();
-    const inputAssetUuids = await uploadRefs(refs);
+
+    // References: upload (capped per model) + weave per-ref guidance into the
+    // prompt — the convention ByteDance models natively understand, and the
+    // main quality gap vs raw images silently attached.
+    const normRefs = normalizeRefs(refs);
+    const { ids: inputAssetUuids, used, dropped } = await uploadRefs(normRefs, m.modelCode);
+
+    // Style scaffolding — a consistent visual-language suffix (lightweight
+    // equivalent of IntelliStory's Look injection).
+    let effPrompt = prompt || '';
+    if (style) effPrompt = `${effPrompt ? effPrompt + '\n\n' : ''}Style: ${style}`;
+    effPrompt = weaveRefGuidance(effPrompt, used);
+
     const params = buildParams(m.modelCode, nodeType, { ...paramInput, has_image: inputAssetUuids.length > 0 });
-    const taskUuid = await px.submitTask({ projectUuid, modelCode: m.modelCode, nodeType, prompt, inputAssetUuids, params });
+    const submit = () => px.submitTask({ projectUuid, modelCode: m.modelCode, nodeType, prompt: effPrompt, inputAssetUuids, params });
+    let taskUuid = await submit();
 
     if (!wait) {
         const est = estimateCredits(m.modelCode, nodeType, params);
         return text(`Task submitted: ${taskUuid}\nModel: ${m.modelName}\n${est != null ? `Estimated cost: ${est} credits\n` : ''}Poll it with get_task.`);
     }
 
-    const detail = await px.pollTask(taskUuid);
+    // One automatic resubmit on a FAILED generation (provider flakiness is
+    // real; failed tasks cost 0 credits). Disable with PIXMAX_RETRIES=0.
+    let detail;
+    try {
+        detail = await px.pollTask(taskUuid);
+    } catch (e) {
+        const retries = process.env.PIXMAX_RETRIES === '0' ? 0 : 1;
+        if (!retries || !/FAILED/i.test(e.message)) throw e;
+        taskUuid = await submit();
+        detail = await px.pollTask(taskUuid);
+    }
     const assets = px.resultAssets(detail);
     const saved = await saveResults(assets, saveTo);
-    return { detail, m, assets, saved };
+    return { detail, m, assets, saved, dropped };
 }
 
 // ── tools ──────────────────────────────────────────────────────────────────
@@ -156,11 +193,20 @@ server.registerTool(
         description:
             'Generate an image with a Pixmax model (Seedream 5 Pro/Lite, Nano Banana / 2 / Pro, Midjourney V7/V8.1/Niji, ' +
             'GPT Image 2, Qwen, MiniMax, Wan). Pass reference_images (file paths or URLs) for image-to-image or character ' +
-            'consistency — up to 14, and they are free. Blocks until the image is ready and returns the URL(s).',
+            'consistency — up to 14, and they are free. Rich refs ({source, role, strength, note}) get their guidance woven into the prompt. `style` keeps a whole set visually coherent. Failed generations retry once automatically. Blocks until ready and returns the URL(s).',
         inputSchema: {
             prompt: z.string().describe('What to generate'),
             model: z.string().describe('Model code or name, e.g. "DOUBAO_SEEDREAM_5_PRO" or "Seedream 5.0 Pro"'),
-            reference_images: z.array(z.string()).optional().describe('Local paths or URLs to condition on (i2i / character refs)'),
+            reference_images: z.array(z.union([
+                z.string(),
+                z.object({
+                    source: z.string().describe('Local path or URL'),
+                    role: z.string().optional().describe('What this ref is: character, style, composition, background, lighting…'),
+                    strength: z.enum(['off', 'hint', 'flexible', 'strong', 'strict']).optional().describe('How closely to follow it (default strong; off = skip)'),
+                    note: z.string().optional().describe('What to take from this ref, e.g. "keep the goggles exactly"'),
+                }),
+            ])).optional().describe('References — plain paths/URLs, or rich objects with role/strength/note; guidance is woven into the prompt so the model knows what each ref is FOR'),
+            style: z.string().optional().describe('Visual-language suffix applied consistently across generations (e.g. "handmade stop-motion miniature, muted palette")'),
             resolution: z.string().optional().describe('e.g. 1K, 2K, 4K — resolution is free on most Pixmax image models'),
             aspect_ratio: z.string().optional().describe('e.g. 16:9, 1:1, 9:16'),
             count: z.number().int().min(1).max(4).optional().describe('Number of images (billed linearly)'),
@@ -173,7 +219,7 @@ server.registerTool(
     async (a) => {
         try {
             const r = await runTask({
-                model: a.model, nodeType: 'GENERATE_IMAGE', prompt: a.prompt, refs: a.reference_images,
+                model: a.model, nodeType: 'GENERATE_IMAGE', prompt: a.prompt, refs: a.reference_images, style: a.style,
                 paramInput: { resolution: a.resolution, aspect_ratio: a.aspect_ratio, count: a.count, quality: a.quality, prompt_extend: a.prompt_extend },
                 saveTo: a.save_to, wait: a.wait !== false,
             });
@@ -202,7 +248,16 @@ server.registerTool(
             prompt: z.string(),
             model: z.string().describe('Model code or name, e.g. "KLING_V3" or "Veo 3.1"'),
             image: z.string().optional().describe('Local path or URL for image-to-video (first frame / reference)'),
-            reference_images: z.array(z.string()).optional().describe('Multiple images (paths or URLs) for i2v / multi-reference models — the first is the primary frame'),
+            reference_images: z.array(z.union([
+                z.string(),
+                z.object({
+                    source: z.string().describe('Local path or URL'),
+                    role: z.string().optional().describe('What this ref is: character, style, composition, background, lighting…'),
+                    strength: z.enum(['off', 'hint', 'flexible', 'strong', 'strict']).optional().describe('How closely to follow it (default strong; off = skip)'),
+                    note: z.string().optional().describe('What to take from this ref, e.g. "keep the goggles exactly"'),
+                }),
+            ])).optional().describe('Multiple reference images for i2v / reference-to-video (first = primary frame); rich objects add role/strength/note guidance'),
+            style: z.string().optional().describe('Visual-language suffix for consistency across clips'),
             duration: z.number().int().optional().describe('Seconds (model-dependent; Veo=8, Hailuo=6|10)'),
             resolution: z.string().optional().describe('e.g. 480P, 720P, 1080P'),
             aspect_ratio: z.string().optional().describe('e.g. 16:9, 9:16'),
@@ -215,10 +270,10 @@ server.registerTool(
     },
     async (a) => {
         try {
-            const refs = a.reference_images?.length ? a.reference_images : (a.image ? [a.image] : []);
+            const refs = [...(a.image ? [a.image] : []), ...(a.reference_images || [])];
             const r = await runTask({
                 model: a.model, nodeType: 'GENERATE_VIDEO', prompt: a.prompt,
-                refs,
+                refs, style: a.style,
                 paramInput: { duration: a.duration, resolution: a.resolution, aspect_ratio: a.aspect_ratio, include_audio: a.include_audio, count: a.count, refer_model: a.refer_model },
                 saveTo: a.save_to, wait: a.wait !== false,
             });
@@ -367,7 +422,16 @@ server.registerTool(
         inputSchema: {
             prompt: z.string().describe('The panel to generate'),
             model: z.string().optional().describe('Storyboard-capable model (default BANANA_PRO). Also GPT_IMAGE_2, BANANA_2.'),
-            reference_images: z.array(z.string()).optional().describe('Local paths or URLs for consistency / i2i'),
+            reference_images: z.array(z.union([
+                z.string(),
+                z.object({
+                    source: z.string().describe('Local path or URL'),
+                    role: z.string().optional().describe('What this ref is: character, style, composition, background, lighting…'),
+                    strength: z.enum(['off', 'hint', 'flexible', 'strong', 'strict']).optional().describe('How closely to follow it (default strong; off = skip)'),
+                    note: z.string().optional().describe('What to take from this ref, e.g. "keep the goggles exactly"'),
+                }),
+            ])).optional().describe('References with optional role/strength/note guidance'),
+            style: z.string().optional().describe('Visual-language suffix for a consistent board set'),
             resolution: z.string().optional().describe('e.g. 1K, 2K, 4K — free on most models'),
             aspect_ratio: z.string().optional().describe('e.g. 16:9, 1:1, 9:16'),
             count: z.number().int().min(1).max(4).optional().describe('Number of panels (billed linearly)'),
@@ -378,7 +442,7 @@ server.registerTool(
     async (a) => {
         try {
             const r = await runTask({
-                model: a.model || 'BANANA_PRO', nodeType: 'GENERATE_STORYBOARD', prompt: a.prompt, refs: a.reference_images,
+                model: a.model || 'BANANA_PRO', nodeType: 'GENERATE_STORYBOARD', prompt: a.prompt, refs: a.reference_images, style: a.style,
                 paramInput: { resolution: a.resolution, aspect_ratio: a.aspect_ratio, count: a.count },
                 saveTo: a.save_to, wait: a.wait !== false,
             });
